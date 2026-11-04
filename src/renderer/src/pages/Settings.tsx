@@ -7,6 +7,7 @@ import { ConfirmDialog, Modal } from '../components/Modal.js'
 import { Field, NumberInput, Select, TextArea, TextInput, isDecimalString } from '../components/Form.js'
 import { useCurrency } from '../components/Currency.js'
 import type { CustomUnitDef, UnitDimension } from '../../../engine/units.js'
+import type { ExchangePreview, ExchangeReport } from '../../../shared/ipc.js'
 
 const DIMENSIONS: Exclude<UnitDimension, 'custom'>[] = ['mass', 'volume', 'length', 'area', 'count']
 const EXPORT_KINDS = ['materials', 'products', 'quotes', 'pricing'] as const
@@ -589,13 +590,73 @@ function IntegrationsSection({
   loading: boolean
   error: string | null
 }) {
+  const [notice, setNotice] = useState<string | null>(null)
+  const [opError, setOpError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [pending, setPending] = useState<{
+    contract: string
+    filePath: string
+    preview: ExchangePreview
+  } | null>(null)
+  const [report, setReport] = useState<ExchangeReport | null>(null)
+
+  async function doExport(contract: string) {
+    setNotice(null)
+    setOpError(null)
+    setBusy(true)
+    try {
+      // Empty selection = export the whole library (products, pricing, scenarios, quotes).
+      const path = await api.exchangeExport(contract, {})
+      setNotice(`Exported exchange file to ${path}`)
+    } catch (e) {
+      setOpError(errMsg(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function doImport(contract: string) {
+    setNotice(null)
+    setOpError(null)
+    setBusy(true)
+    try {
+      // Native file dialog; validateFile only reads — nothing is written until Confirm.
+      const { filePath, preview } = await api.exchangeValidateFile(contract)
+      setPending({ contract, filePath, preview })
+    } catch (e) {
+      const msg = errMsg(e)
+      if (!/cancelled/i.test(msg)) setOpError(msg)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function confirmImport() {
+    if (!pending) return
+    setOpError(null)
+    setBusy(true)
+    try {
+      const rep = await api.exchangeApplyImport(pending.filePath, { confirmed: true })
+      setPending(null)
+      setReport(rep)
+    } catch (e) {
+      setOpError(errMsg(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   return (
     <div className="card mb-16">
       <div className="section-title">Integrations</div>
       <p className="muted">
-        Data contracts for exchanging costs and prices with other Clever Signal apps. None are
-        connected — each contract below describes what a manual exchange looks like today.
+        Data contracts for exchanging costs and prices with other Clever Signal apps. Nothing
+        connects automatically — you move a <code>.pricey-exchange.json</code> file yourself,
+        review exactly what will be created or updated, and confirm. Imports never touch
+        snapshots; every import and export is recorded in the exchange log.
       </p>
+      {notice ? <p className="muted" style={{ color: 'var(--ok, #3d9a50)' }}>{notice}</p> : null}
+      {opError ? <ErrorBanner message={opError} /> : null}
       {loading ? (
         <Loading />
       ) : error ? (
@@ -610,6 +671,7 @@ function IntegrationsSection({
               <th>Direction</th>
               <th>Status</th>
               <th>Manual exchange</th>
+              <th>File exchange</th>
             </tr>
           </thead>
           <tbody>
@@ -628,11 +690,185 @@ function IntegrationsSection({
                   <span className="pill pill-amber">Not connected</span>
                 </td>
                 <td className="muted">{c.description}</td>
+                <td style={{ whiteSpace: 'nowrap' }}>
+                  {c.direction === 'outbound' ? (
+                    <button type="button" className="secondary" disabled={busy} onClick={() => void doExport(c.name)}>
+                      Export
+                    </button>
+                  ) : (
+                    <button type="button" className="secondary" disabled={busy} onClick={() => void doImport(c.name)}>
+                      Import
+                    </button>
+                  )}
+                </td>
               </tr>
             ))}
           </tbody>
         </table>
       )}
+      {pending ? (
+        <ImportPreviewDialog
+          pending={pending}
+          busy={busy}
+          onCancel={() => setPending(null)}
+          onConfirm={() => void confirmImport()}
+        />
+      ) : null}
+      {report ? <ImportReportDialog report={report} onClose={() => setReport(null)} /> : null}
     </div>
+  )
+}
+
+function ImportPreviewDialog({
+  pending,
+  busy,
+  onCancel,
+  onConfirm,
+}: {
+  pending: { contract: string; filePath: string; preview: ExchangePreview }
+  busy: boolean
+  onCancel: () => void
+  onConfirm: () => void
+}) {
+  const { preview } = pending
+  const toCreate = preview.rows.filter((r) => r.action === 'create')
+  const toUpdate = preview.rows.filter((r) => r.action === 'update')
+  return (
+    <Modal
+      title={`Import preview — ${pending.contract}`}
+      onClose={onCancel}
+      wide
+      footer={
+        <>
+          <button type="button" className="secondary" onClick={onCancel} disabled={busy}>
+            Cancel
+          </button>
+          <button type="button" onClick={onConfirm} disabled={busy || preview.rows.length === 0}>
+            {busy ? 'Importing…' : `Confirm import (${preview.totals.create + preview.totals.update} rows)`}
+          </button>
+        </>
+      }
+    >
+      <p className="muted" style={{ fontSize: 12, wordBreak: 'break-all' }}>
+        {pending.filePath} · exported {preview.exportedAt} by {preview.producer}{' '}
+        {preview.producerVersion}
+      </p>
+      {preview.rows.length === 0 && preview.rejected.length === 0 ? (
+        <EmptyState title="Nothing to import" message="The file validated, but it contains no rows." />
+      ) : null}
+      {toCreate.length > 0 ? (
+        <>
+          <h4>Will be created ({toCreate.length})</h4>
+          <table>
+            <tbody>
+              {toCreate.map((r, i) => (
+                <tr key={i}>
+                  <td><span className="pill">{r.kind}</span></td>
+                  <td><strong>{r.name}</strong><div className="muted" style={{ fontSize: 11 }}>{r.detail}</div></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      ) : null}
+      {toUpdate.length > 0 ? (
+        <>
+          <h4>Will be updated ({toUpdate.length})</h4>
+          <table>
+            <tbody>
+              {toUpdate.map((r, i) => (
+                <tr key={i}>
+                  <td><span className="pill">{r.kind}</span></td>
+                  <td>
+                    <strong>{r.name}</strong>
+                    <div className="muted" style={{ fontSize: 11 }}>{r.detail}</div>
+                    {r.changes.map((ch, j) => (
+                      <div key={j} className="muted" style={{ fontSize: 11 }}>• {ch}</div>
+                    ))}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      ) : null}
+      {preview.rejected.length > 0 ? (
+        <>
+          <h4>Rejected — will not be imported ({preview.rejected.length})</h4>
+          <table>
+            <tbody>
+              {preview.rejected.map((r, i) => (
+                <tr key={i}>
+                  <td><span className="pill">{r.kind}</span></td>
+                  <td>
+                    <strong>{r.name}</strong>
+                    {r.reasons.map((reason, j) => (
+                      <div key={j} className="muted" style={{ fontSize: 11 }}>• {reason}</div>
+                    ))}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      ) : null}
+      <p className="muted" style={{ fontSize: 12 }}>
+        Nothing has been written yet. Confirm applies every row above in one step; rejected rows
+        are skipped. Snapshots are never modified by an import.
+      </p>
+    </Modal>
+  )
+}
+
+function ImportReportDialog({
+  report,
+  onClose,
+}: {
+  report: ExchangeReport
+  onClose: () => void
+}) {
+  return (
+    <Modal
+      title="Import complete"
+      onClose={onClose}
+      footer={
+        <button type="button" onClick={onClose}>
+          Done
+        </button>
+      }
+    >
+      <p>
+        <strong>{report.created}</strong> created · <strong>{report.updated}</strong> updated ·{' '}
+        <strong>{report.rejected}</strong> rejected
+      </p>
+      {report.applied.length > 0 ? (
+        <table>
+          <tbody>
+            {report.applied.map((r, i) => (
+              <tr key={i}>
+                <td><span className="pill">{r.kind}</span></td>
+                <td>
+                  <strong>{r.name}</strong>{' '}
+                  <span className="muted" style={{ fontSize: 11 }}>{r.action}d</span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      ) : null}
+      {report.rejectedRows.length > 0 ? (
+        <>
+          <h4>Rejected</h4>
+          {report.rejectedRows.map((r, i) => (
+            <div key={i} className="muted" style={{ fontSize: 11 }}>
+              <strong>{r.name}</strong>
+              {r.reasons.map((reason, j) => (
+                <div key={j}>• {reason}</div>
+              ))}
+            </div>
+          ))}
+        </>
+      ) : null}
+    </Modal>
   )
 }

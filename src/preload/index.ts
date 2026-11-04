@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { IPC } from '../shared/ipc.js'
-import type { PriceyApi } from '../shared/ipc.js'
+import type { ExchangePreview, PriceyApi } from '../shared/ipc.js'
 
 /**
  * Zero-dependency preload (Sublium lesson): this bundle may only contain the
@@ -148,6 +148,16 @@ const api: PriceyApi = {
   exportsImportTemplate: (kind?: string) => invoke<string>(IPC.exportsImportTemplate, kind),
 
   integrationsContracts: () => invoke(IPC.integrationsContracts),
+
+  exchangeExport: (contract, selection) => invoke<string>(IPC.exchangeExport, contract, selection),
+  exchangeValidateFile: (contract, filePath) =>
+    invoke<{ filePath: string; preview: ExchangePreview }>(
+      IPC.exchangeValidateFile,
+      contract,
+      filePath,
+    ),
+  exchangeApplyImport: (filePath, options) => invoke(IPC.exchangeApplyImport, filePath, options),
+  exchangeLog: (limit) => invoke(IPC.exchangeLog, limit),
 }
 
 contextBridge.exposeInMainWorld('pricey', api)

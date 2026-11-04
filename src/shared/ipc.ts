@@ -37,6 +37,16 @@ import type {
   UpdateMaterialInput,
 } from './types.js'
 
+import type {
+  ExchangeLogEntry,
+  ExchangePreview,
+  ExchangeReport,
+  ExchangeSelection,
+} from '../engine/exchange.js'
+
+/** Re-exported (type-only, erased at compile) for the preload + renderer. */
+export type { ExchangeLogEntry, ExchangePreview, ExchangeReport, ExchangeSelection }
+
 /** Opaque engine payloads — the engine engineer owns their shapes; the UI engineer refines these later. */
 export type EngineResult = Record<string, unknown>
 
@@ -171,6 +181,11 @@ export const IPC = {
   exportsImportTemplate: 'exports.importTemplate',
 
   integrationsContracts: 'integrations.contracts',
+
+  exchangeExport: 'exchange.export',
+  exchangeValidateFile: 'exchange.validateFile',
+  exchangeApplyImport: 'exchange.applyImport',
+  exchangeLog: 'exchange.log',
 } as const
 
 /* ---- Input shapes (scaffold-level; the backend engineer refines) ---- */
@@ -518,6 +533,23 @@ export interface PriceyApi {
   exportsImportTemplate(): Promise<string>
 
   integrationsContracts(): Promise<EngineResult>
+
+  /**
+   * pricey-exchange-v1 file exchange. Export writes a versioned
+   * .pricey-exchange.json file (native save dialog) and returns its path.
+   * Validate reads a file and returns the create/update/reject preview —
+   * it never writes. Apply needs confirmed: true and returns the report.
+   */
+  exchangeExport(contract: string, selection?: ExchangeSelection): Promise<string>
+  exchangeValidateFile(
+    contract: string,
+    filePath?: string,
+  ): Promise<{ filePath: string; preview: ExchangePreview }>
+  exchangeApplyImport(
+    filePath: string,
+    options: { confirmed: boolean },
+  ): Promise<ExchangeReport>
+  exchangeLog(limit?: number): Promise<ExchangeLogEntry[]>
 }
 
 export type { MaterialCategory, UnitDimension }

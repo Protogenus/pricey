@@ -22,35 +22,60 @@ shows an honest "Not connected" state with the manual path beside it.
 - **Snapshots are never overwritten** by an import. Quote and calculation
   snapshots are append-only history.
 
-## Exchange mechanism — current state (manual)
+## Exchange mechanism — built (v1 file exchange)
 
-The contracts below are **documented, versioned interfaces**; the file-based
-exchange described after them is the planned v1 import path and is **not yet
-built**. What exists today, and works fully:
+Exchange is file-based JSON through Settings → Integrations. Each contract row
+has a working button: the five inbound contracts have **Import**, the outbound
+`orderly.pricing-export` has **Export**.
 
-- **Manual exchange:** the user reads a sibling app's export (or its screen)
-  and enters the values into Pricey using the field mapping in each contract.
-  Every Pricey workflow — materials, products, cost roll-ups, quotes — works
-  completely this way. The Settings → Integrations panel lists each contract
-  with an honest "Not connected" state and the manual path beside it.
+- **Inbound:** Integrations → contract row → **Import** → choose a
+  `.pricey-exchange.json` file → Pricey validates the whole file, then shows a
+  preview: rows to create, rows to update (matched by `externalId`, falling
+  back to name+unit for materials and name for products), and rows rejected
+  with field-level reasons. **Nothing is written until you press Confirm
+  import.** The commit is one explicit user action, applied in a single
+  transaction.
+- **Outbound:** Integrations → `orderly.pricing-export` → **Export** → native
+  save dialog → a versioned `.pricey-exchange.json` file carrying Pricey's
+  products, cost structures, pricing models, scenarios and frozen quote
+  snapshots.
 
-## Planned v1 file exchange (not implemented)
+Payloads carry a versioned envelope:
 
-When built, exchange will be file-based JSON through Pricey's Import/Export
-screens:
+```json
+{ "schema": "pricey-exchange", "schemaVersion": 1,
+  "exportedAt": "<ISO>", "producer": "Pricey", "producerVersion": "<app version>",
+  "contract": "<name>", "contractVersion": 1, "payload": { ... } }
+```
 
-- **Inbound:** user opens Integrations → selects a contract → chooses a
-  `.pricey-exchange.json` file exported from the sibling app → reviews a
-  field-by-field mapping preview → confirms. Pricey validates the payload
-  against the contract schema and reports every rejected field.
-- **Outbound:** user selects Pricey records → Export → produces a versioned
-  JSON file the sibling app can import under its own contract.
-- Payloads will carry `{ "contract": "<name>", "contractVersion": 1,
-  "exportedAt": "<ISO>", "exportedBy": "<app>" }`. Unknown contract versions
-  are rejected with a clear message, never guessed at.
+Unknown schema major versions and unsupported contract versions are rejected
+with a clear message and the file is not imported — never guessed at.
 
-Until that exists, the field mappings in each contract below are the manual
-exchange guide.
+**Audit trail:** every import and export appends a row to the `exchange_log`
+table (direction, contract, filename, created/updated/rejected counts,
+timestamp). `externalId` matches are remembered in settings so a re-import of
+the same file updates instead of duplicating.
+
+**Pricey-to-Pricey transfer:** the `orderly.pricing-export` payload carries
+Pricey-owned sections (`products`, `costStructures`, `pricingModels`,
+`scenarios`, `quoteSnapshots`) alongside the documented `pricings` array.
+Pricey can import its own exports (moving a library to a new machine or
+database): materials and products are created or updated with their full cost
+structures, pricing models and scenarios are recreated, and quote snapshots
+are imported as **new** quote rows with their frozen totals carried over
+verbatim — existing quotes are never touched. Foreign consumers must ignore
+sections they do not understand. Labor role links do not transfer (the rate
+travels on the line); overhead items are recreated by name when missing.
+
+**Pricing export basis:** `unitPrice` is the pricing-method price on the
+product's unit cost, before channel fees and rounding, as exact decimal
+strings. Channel fees stay Pricey-side. Each exported pricing row references a
+frozen `exchange` cost snapshot (`snapshotId`) kept in Pricey for audit.
+
+What still works fully without any of this: **manual exchange.** The field
+mappings in each contract below remain the manual exchange guide — read the
+sibling app's export (or its screen) and enter the values. Every Pricey
+workflow works completely this way.
 
 ## Contracts
 
@@ -85,7 +110,9 @@ Receive a formula's composition and ingredient costs from Elixer.
 
 Mapping: creates/updates a Pricey product with material lines (unit
 conversions applied by the engine; incompatible units rejected with the
-field named).
+field named). Ingredient quantities cover the whole `yieldQty`, so each
+line is stored per-unit (`qty ÷ yieldQty`) and the product's batch size is
+the yield.
 
 ### 3. `stagepoint.production-costs` v1 — inbound (optional)
 Receive production quantities, labor requirements and production cost
@@ -129,33 +156,47 @@ Mapping: thread + stabilizer → material lines; production time → labor line.
 
 ### 6. `orderly.pricing-export` v1 — outbound (optional)
 Make saved pricing and quotation information available to Orderly's order
-workflows.
+workflows. The payload travels inside the standard envelope
+(`schema: "pricey-exchange"`, `schemaVersion: 1`).
 
 ```json
-{ "contract": "orderly.pricing-export", "contractVersion": 1,
-  "pricings": [
-    { "productName": "Citrus Soap", "sku": "SOAP-01",
-      "channel": "wholesale", "unitPrice": "8.50",
-      "currency": "USD", "snapshotId": 42 }
-  ] }
+{ "schema": "pricey-exchange", "schemaVersion": 1,
+  "contract": "orderly.pricing-export", "contractVersion": 1,
+  "payload": {
+    "pricings": [
+      { "productName": "Citrus Soap", "sku": "SOAP-01",
+        "channel": "wholesale", "unitPrice": "8.50",
+        "currency": "USD", "snapshotId": 42 }
+    ],
+    "products": [ { "name": "Citrus Soap", "sku": "SOAP-01", "category": "Soap",
+      "unitOfSale": "piece", "batchSize": 12, "wastePct": "0", "defectPct": "0",
+      "costPerUnit": "5.25" } ],
+    "costStructures": [ { "productName": "Citrus Soap", "materials": [ ... ],
+      "labor": [ ... ], "overhead": [ ... ], "otherCosts": [ ... ] } ],
+    "pricingModels": [ ... ], "scenarios": [ ... ], "quoteSnapshots": [ ... ]
+  } }
 ```
 
-Orderly imports prices as quoted figures; Pricey retains the full
-calculation snapshot behind `snapshotId` for audit.
+Orderly reads the `pricings` array and ignores the additive Pricey-owned
+sections. Pricey retains the full calculation snapshot behind `snapshotId`
+for audit.
 
-## Validation & errors (planned v1 file exchange)
+## Validation & errors (v1 file exchange — built)
 
-When the file exchange above is built, these rules will govern it:
-
-- Every inbound payload is schema-checked before any write; the first
-  failure aborts the import with the offending field named.
-- Unit dimensions must match Pricey's unit registry or the line is rejected
-  (listed in the import error report).
-- Duplicate `externalId`s update rather than duplicate, only after user
-  confirmation per record.
-- A full import error report (accepted / rejected / skipped rows with
-  reasons) is shown before anything is committed, and the commit itself is
-  one explicit user action.
+- Every file is schema-checked before any write; a structural failure
+  (malformed JSON, wrong schema, unsupported schema or contract version,
+  duplicate `externalId`s within the file) aborts the whole import with the
+  offending field named — nothing is written.
+- Row-level problems (unknown or incompatible units, bad decimal values) do
+  not abort the file: the row is rejected and listed in the preview's
+  rejected section with field-level reasons, and it is skipped at commit.
+- Unit symbols must exist in Pricey's unit registry (built-ins plus the
+  custom units defined in Settings); a declared `unitDimension` must match
+  the registry or the row is rejected.
+- Duplicate `externalId`s update rather than duplicate, matched in the
+  preview and applied only after the explicit Confirm.
+- A full import report (created / updated / rejected rows with reasons) is
+  returned after the commit, and the exchange log records the run.
 
 ## What is NOT built
 

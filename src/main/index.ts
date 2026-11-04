@@ -202,6 +202,7 @@ const PRICEY_API_METHODS: string[] = [
   'snapshotsList', 'snapshotsCreate', 'snapshotsGet',
   'exportsCsv', 'exportsXlsx', 'exportsImportTemplate',
   'integrationsContracts',
+  'exchangeExport', 'exchangeValidateFile', 'exchangeApplyImport', 'exchangeLog',
 ]
 
 app.on('window-all-closed', () => {

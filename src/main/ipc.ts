@@ -7,9 +7,15 @@
  * src/engine, SQL lives in src/database/* — this file only wires them.
  */
 import { app, BrowserWindow, dialog, ipcMain } from 'electron'
-import { writeFileSync } from 'node:fs'
+import { readFileSync, writeFileSync } from 'node:fs'
 import Decimal from 'decimal.js'
 import { IPC, type IpcResult } from '../shared/ipc.js'
+import type {
+  ExchangeLogEntry,
+  ExchangePreview,
+  ExchangeReport,
+  ExchangeSelection,
+} from '../shared/ipc.js'
 import type { DatabaseType } from '../database/index.js'
 import { openDatabase } from '../database/index.js'
 import { runMigrations } from '../database/migrations.js'
@@ -27,6 +33,8 @@ import * as quotesDao from '../database/quotes.js'
 import * as snapshotsDao from '../database/snapshots.js'
 import * as templatesDao from '../database/templates.js'
 import * as exportsDao from '../database/exports.js'
+import * as exchangeDao from '../database/exchange.js'
+import { parseExchangeFile } from '../engine/exchange.js'
 import {
   applyFeesToPrice,
   computeBreakEven,
@@ -347,6 +355,92 @@ export function registerIpc(db: DatabaseType): void {
 
   /* ---------------- integrations ---------------- */
   handle(IPC.integrationsContracts, () => INTEGRATION_CONTRACTS)
+
+  /* ---------------- pricey-exchange-v1 file exchange ---------------- */
+  handle<string>(IPC.exchangeExport, async (contract: string, selection?: ExchangeSelection) => {
+    const db = getDb()
+    const { envelope, counts } = exchangeDao.buildExport(db, contract, selection ?? {}, {
+      appVersion: app.getVersion(),
+      customUnits: productsDao.readCustomUnits(db),
+    })
+    const picked = await dialog.showSaveDialog({
+      title: 'Export Pricey exchange file',
+      defaultPath: `pricey-${contract}-v${envelope.contractVersion}.pricey-exchange.json`,
+      filters: [
+        { name: 'Pricey exchange (*.pricey-exchange.json)', extensions: ['pricey-exchange.json'] },
+        { name: 'JSON', extensions: ['json'] },
+      ],
+    })
+    if (picked.canceled || !picked.filePath) throw new Error('Export was cancelled.')
+    writeFileSync(picked.filePath, JSON.stringify(envelope, null, 2), 'utf8')
+    exchangeDao.logExchange(db, {
+      direction: 'export',
+      contract: envelope.contract,
+      filename: picked.filePath,
+      recordsCreated: counts.products + counts.pricingConfigs + counts.scenarios + counts.quotes,
+      recordsUpdated: 0,
+      recordsRejected: 0,
+    })
+    return picked.filePath
+  })
+  handle<{ filePath: string; preview: ExchangePreview }>(
+    IPC.exchangeValidateFile,
+    async (contract: string, filePath?: string) => {
+      let path = filePath
+      if (!path) {
+        const picked = await dialog.showOpenDialog({
+          title: 'Import Pricey exchange file',
+          filters: [
+            {
+              name: 'Pricey exchange (*.pricey-exchange.json)',
+              extensions: ['pricey-exchange.json'],
+            },
+            { name: 'JSON', extensions: ['json'] },
+          ],
+          properties: ['openFile'],
+        })
+        if (picked.canceled || picked.filePaths.length === 0) {
+          throw new Error('Import was cancelled.')
+        }
+        path = picked.filePaths[0]
+      }
+      const text = readFileSync(path, 'utf8')
+      const db = getDb()
+      const { envelope } = parseExchangeFile(text, {
+        customUnits: productsDao.readCustomUnits(db),
+      })
+      if (envelope.contract !== contract) {
+        throw new Error(
+          `This file is a "${envelope.contract}" export, but you started an import for ` +
+            `"${contract}". Open the import from the matching contract row. Nothing was imported.`,
+        )
+      }
+      // validateFile never writes — preview only.
+      const preview = exchangeDao.previewImport(db, envelope, productsDao.readCustomUnits(db))
+      return { filePath: path, preview }
+    },
+  )
+  handle<ExchangeReport>(
+    IPC.exchangeApplyImport,
+    (filePath: string, options?: { confirmed?: boolean }) => {
+      if (typeof filePath !== 'string' || !filePath) {
+        throw new Error('A file path is required.')
+      }
+      const db = getDb()
+      const text = readFileSync(filePath, 'utf8')
+      const { envelope } = parseExchangeFile(text, {
+        customUnits: productsDao.readCustomUnits(db),
+      })
+      return exchangeDao.applyImport(db, envelope, {
+        confirmed: options?.confirmed === true,
+        customUnits: productsDao.readCustomUnits(db),
+        filename: filePath,
+      })
+    },
+  )
+  handle<ExchangeLogEntry[]>(IPC.exchangeLog, (limit?: number) =>
+    exchangeDao.listExchangeLog(getDb(), limit),
+  )
 }
 
 /* ------------------------------------------------------------------ */
