@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "lib": [
+      "ES2022",
+      "DOM",
+      "DOM.Iterable"
+    ],
+    "noEmit": true,
+    "types": []
+  },
+  "extends": "./tsconfig.json",
+  "include": [
+    "src/renderer/**/*",
+    "src/shared/**/*",
+    "src/engine/**/*"
+  ]
+}

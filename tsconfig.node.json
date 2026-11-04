@@ -1,0 +1,14 @@
+{
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "extends": "./tsconfig.json",
+  "include": [
+    "src/main/**/*",
+    "src/preload/**/*",
+    "src/shared/**/*",
+    "src/database/**/*",
+    "electron.vite.config.ts",
+    "src/engine/**/*"
+  ]
+}

@@ -1,0 +1,231 @@
+/* ==========================================================================
+ * Clever Signal — shared design tokens, v2.
+ * Authoritative source: ~/workspace/faceless-launch-system/DESIGN_SYSTEM.md
+ * Derived from Blake's reference screenshots (design-reference/vista-*.webp).
+ * Style + color direction only — never the reference's product or branding.
+ *
+ * Materialist v1 is the first implementation. New products start from these
+ * tokens. If a product needs a new token, propose it in DESIGN_SYSTEM.md
+ * first — the system grows by amendment, not by drift.
+ * ========================================================================== */
+
+/* ---- Typography: Fraunces (display) + Inter (UI) ---------------------------
+ * Font files are vendored locally (offline-first app — no CDN).
+ * They live at ./assets/fonts/*.woff2 (relative to this file) and are
+ * bundled by Vite at build time — landing in Phase 5 (UI phase).
+ * -------------------------------------------------------------------------- */
+@font-face {
+  font-family: 'Fraunces';
+  src: url('./assets/fonts/fraunces-latin-600.woff2') format('woff2');
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Inter';
+  src: url('./assets/fonts/inter-latin-400.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Inter';
+  src: url('./assets/fonts/inter-latin-600.woff2') format('woff2');
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Inter';
+  src: url('./assets/fonts/inter-latin-700.woff2') format('woff2');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  color-scheme: light;
+
+  /* Brand palette — light mode (default) */
+  --bg: #F5F0E6;              /* warm cream */
+  --surface: #FFFDF9;         /* cards, panels, dialogs */
+  --ink: #1C1A17;             /* primary text; also dark primary buttons */
+  --ink-cream: #F5F0E6;       /* text on dark surfaces */
+  --muted: #8A8478;
+
+  /* Sidebar (stays dark in both modes) */
+  --sidebar: #1B1917;
+  --sidebar-ink: #F5F0E6;
+  --sidebar-muted: #A39E93;
+  --sidebar-active: #2E2A26;
+
+  /* Pastel accents */
+  --accent: #D98AA8;          /* soft pink — brand dot, key highlights */
+  --accent-soft: #F9E4EC;
+  --accent-deep: #A94F72;     /* pink darkened for text on light */
+  --sage: #9DB189;            /* sage green — positive data, success */
+  --sage-soft: #EAF0E4;
+  --sage-deep: #5F7D4F;       /* sage darkened for text on light */
+  --amber: #C99A2E;           /* warning accent */
+  --amber-soft: #F7ECD4;
+  --amber-deep: #8A6D1F;      /* amber darkened for text on light */
+  --sky: #8FA9C7;             /* dusty blue — neutral data series */
+  --sky-soft: #E6EDF5;
+  --sky-deep: #4A6A8C;
+
+  --border: #EAE3D5;
+
+  /* Semantic */
+  --success: #5F7D4F;
+  --success-soft: #EAF0E4;
+  --warning: #8A6D1F;
+  --warning-soft: #F7ECD4;
+  --danger: #C25E5E;
+  --danger-soft: #F7E3E3;
+  --info: #4A6A8C;
+  --info-soft: #E6EDF5;
+
+  /* Typography */
+  --font-display: 'Fraunces', Georgia, serif;
+  --font-ui: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --text-caption: 12px;
+  --text-small: 13px;
+  --text-body: 14px;
+  --text-emphasis: 16px;
+  --text-title: 20px;
+  --text-display: 24px;
+  --text-hero: 32px;
+
+  /* Shape & spacing */
+  --radius-card: 18px;
+  --radius-control: 12px;
+  --radius-pill: 999px;
+  --space-unit: 4px;
+  --shadow-soft: 0 1px 3px rgba(28, 26, 23, 0.07);
+}
+
+/* Dark mode: sidebar stays exactly as-is; the main area inverts. */
+[data-theme='dark'] {
+  color-scheme: dark;
+
+  --bg: #1B1917;
+  --surface: #2E2A26;
+  --ink: #F5F0E6;
+  --ink-cream: #1C1A17;
+  --muted: #A39E93;
+  --border: #3D3833;
+
+  /* Pastels deepen one step for contrast on dark surfaces */
+  --accent: #E5A3BC;
+  --accent-soft: #4A2531;
+  --accent-deep: #E5A3BC;
+  --sage: #B3C4A1;
+  --sage-soft: #2C3626;
+  --sage-deep: #B3C4A1;
+  --amber: #D9B45C;
+  --amber-soft: #453A1D;
+  --amber-deep: #D9B45C;
+  --sky: #A9C0D8;
+  --sky-soft: #26333F;
+  --sky-deep: #A9C0D8;
+
+  --success: #8FAE7D;
+  --success-soft: #2C3626;
+  --warning: #D9B45C;
+  --warning-soft: #453A1D;
+  --danger: #DE8585;
+  --danger-soft: #4A2626;
+  --info: #A9C0D8;
+  --info-soft: #26333F;
+}
+
+/* ---- Margin-health semantics (consistent everywhere) ----------------------
+ * sage    = margin at or above target (healthy)
+ * amber   = margin within 5 points below target (slipping)
+ * red     = margin more than 5 points below target (needs attention)
+ * -------------------------------------------------------------------------- */
+.health-good { color: var(--success); }
+.health-warn { color: var(--warning); }
+.health-bad { color: var(--danger); }
+
+/* Numbers that matter: tabular numerals, currency to 2 decimals (Intl). */
+.money { font-variant-numeric: tabular-nums; }
+
+/* ---- Status pills: tinted wash bg + darker text --------------------------- */
+.pill {
+  display: inline-block;
+  font-size: var(--text-caption);
+  font-weight: 600;
+  padding: 3px 12px;
+  border-radius: var(--radius-pill);
+  background: var(--sky-soft);
+  color: var(--sky-deep);
+  white-space: nowrap;
+}
+.pill-pink { background: var(--accent-soft); color: var(--accent-deep); }
+.pill-amber { background: var(--amber-soft); color: var(--amber-deep); }
+.pill-sage { background: var(--sage-soft); color: var(--sage-deep); }
+.pill-sky { background: var(--sky-soft); color: var(--sky-deep); }
+.pill-danger { background: var(--danger-soft); color: var(--danger); }
+
+/* ---- Pill toggle group (e.g. Revenue | Deals): selected gets a border ----- */
+.pill-toggle { display: inline-flex; gap: 4px; }
+.pill-toggle button {
+  border: 1px solid transparent;
+  background: transparent;
+  border-radius: var(--radius-pill);
+  padding: 6px 14px;
+  font-size: var(--text-small);
+  font-family: var(--font-ui);
+  color: var(--muted);
+  cursor: pointer;
+}
+.pill-toggle button.selected {
+  border-color: var(--ink);
+  color: var(--ink);
+  font-weight: 600;
+  background: var(--surface);
+}
+
+/* ---- Toggle switch: dark pill, light knob --------------------------------- */
+.switch {
+  position: relative;
+  display: inline-block;
+  width: 40px;
+  height: 22px;
+  flex: none;
+}
+.switch input { opacity: 0; width: 0; height: 0; }
+.switch .track {
+  position: absolute; inset: 0;
+  background: var(--border);
+  border-radius: var(--radius-pill);
+  transition: background 0.15s ease;
+  cursor: pointer;
+}
+.switch .track::after {
+  content: '';
+  position: absolute;
+  width: 16px; height: 16px;
+  left: 3px; top: 3px;
+  background: var(--surface);
+  border-radius: 50%;
+  transition: transform 0.15s ease;
+  box-shadow: var(--shadow-soft);
+}
+.switch input:checked + .track { background: var(--ink); }
+.switch input:checked + .track::after { transform: translateX(18px); }
+
+/* ---- Notices: calm card, tinted wash, bold/serif headline ------------------ */
+.notice {
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--info);
+  background: var(--info-soft);
+  border-radius: var(--radius-control);
+  padding: 12px 16px;
+  margin-bottom: 16px;
+}
+.notice.notice-success { border-left-color: var(--success); background: var(--success-soft); }
+.notice.notice-warning { border-left-color: var(--amber); background: var(--amber-soft); }
+.notice.notice-danger { border-left-color: var(--danger); background: var(--danger-soft); }
+.notice strong { display: block; margin-bottom: 2px; }
