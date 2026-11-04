@@ -202,6 +202,7 @@ function QuoteBuilder({ quoteId, onBack }: { quoteId: ID; onBack: () => void }) 
   const products = productsQ.data ?? []
   const [error, setError] = useState<string | null>(null)
   const [pdfPath, setPdfPath] = useState<string | null>(null)
+  const [pdfDirect, setPdfDirect] = useState(false)
   const [showFrozen, setShowFrozen] = useState(false)
   const [busy, setBusy] = useState(false)
 
@@ -225,13 +226,32 @@ function QuoteBuilder({ quoteId, onBack }: { quoteId: ID; onBack: () => void }) 
     setBusy(true)
     setError(null)
     try {
-      // The backend renders the quote to PDF and shows a native save dialog.
-      const path = await api.quotesExportPdf(quoteId)
-      setPdfPath(path)
+      // When "Save PDFs without asking" is on, the backend writes the PDF
+      // straight to the configured folder with no dialog. Otherwise the
+      // backend shows the usual native save dialog.
+      const autoSave = (await api.settingsGet('pdf.autoSave').catch(() => null)) === '1'
+      if (autoSave) {
+        const { path } = await api.quotesExportPdfDirect(quoteId)
+        setPdfDirect(true)
+        setPdfPath(path)
+      } else {
+        const path = await api.quotesExportPdf(quoteId)
+        setPdfDirect(false)
+        setPdfPath(path)
+      }
     } catch (e) {
       setError(errMsg(e))
     }
     setBusy(false)
+  }
+
+  async function openPdfFolder() {
+    if (!pdfPath) return
+    try {
+      await api.quotesExportPdfOpenFolder(pdfPath)
+    } catch (e) {
+      setError(errMsg(e))
+    }
   }
 
   if (q.loading) {
@@ -282,9 +302,16 @@ function QuoteBuilder({ quoteId, onBack }: { quoteId: ID; onBack: () => void }) 
         <div className="notice notice-success mb-16">
           <strong>PDF exported</strong>
           <div>Saved to: {pdfPath}</div>
-          <button type="button" className="secondary" style={{ marginTop: 8 }} onClick={() => setPdfPath(null)}>
-            Dismiss
-          </button>
+          <div style={{ marginTop: 8, display: 'flex', gap: 8 }}>
+            {pdfDirect ? (
+              <button type="button" className="secondary" onClick={() => void openPdfFolder()}>
+                Open folder
+              </button>
+            ) : null}
+            <button type="button" className="secondary" onClick={() => setPdfPath(null)}>
+              Dismiss
+            </button>
+          </div>
         </div>
       ) : null}
 

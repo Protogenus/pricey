@@ -6,9 +6,9 @@
  * in the {ok:true,data} / {ok:false,error:{message}} envelope. Math lives in
  * src/engine, SQL lives in src/database/* — this file only wires them.
  */
-import { app, BrowserWindow, dialog, ipcMain } from 'electron'
-import { readFileSync, writeFileSync } from 'node:fs'
-import { basename } from 'node:path'
+import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
+import { accessSync, constants, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { basename, dirname, join } from 'node:path'
 import Decimal from 'decimal.js'
 import { IPC, type IpcResult } from '../shared/ipc.js'
 import type {
@@ -63,7 +63,7 @@ import {
 } from '../engine/index.js'
 import type { CostOverrides } from '../database/products.js'
 import type { ID, PricingMethod } from '../shared/types.js'
-import { buildQuoteHtml, type QuoteBusinessInfo } from './pdf.js'
+import { buildQuoteHtml, quotePdfDirectFileName, type QuoteBusinessInfo } from './pdf.js'
 import { nowIso, parseJson, requireId } from '../database/util.js'
 
 /** Wrap a handler in the {ok:true,data}/{ok:false,error} envelope. */
@@ -413,6 +413,13 @@ export function registerIpc(db: DatabaseType): void {
   handle(IPC.quotesGetFull, (id: ID) => quotesDao.getFull(getDb(), id))
   handle(IPC.quotesDuplicate, (id: ID) => quotesDao.duplicate(getDb(), id))
   handle<string>(IPC.quotesExportPdf, (id: ID) => exportQuotePdf(getDb(), id))
+  handle<{ path: string }>(IPC.quotesExportPdfDirect, (id: ID) =>
+    exportQuotePdfDirect(getDb(), id),
+  )
+  handle<string | null>(IPC.quotesExportPdfPickDir, () => pickPdfExportDir())
+  handle<void>(IPC.quotesExportPdfOpenFolder, (filePath: string) =>
+    openPdfExportFolder(filePath),
+  )
   handle(IPC.quoteItemsAdd, (quoteId: ID, input) => quotesDao.addItem(getDb(), quoteId, input))
   handle(IPC.quoteItemsUpdate, (input) => quotesDao.updateItem(getDb(), input))
   handle<void>(IPC.quoteItemsRemove, (id: ID) => {
@@ -984,7 +991,16 @@ function applyTemplate(db: DatabaseType, templateId: ID, productName: string) {
 /* Quotes → PDF                                                        */
 /* ------------------------------------------------------------------ */
 
-async function exportQuotePdf(db: DatabaseType, quoteId: ID): Promise<string> {
+/**
+ * Shared HTML → PDF pipeline: both the native-save-dialog export and the
+ * direct-save export render from the exact same quote HTML builder, so the
+ * page content is byte-identical and only the destination differs. Returns
+ * the PDF bytes plus the quote reference for naming the output file.
+ */
+async function renderQuotePdfBuffer(
+  db: DatabaseType,
+  quoteId: ID,
+): Promise<{ pdf: Buffer; reference: string }> {
   const full = quotesDao.getFull(db, requireId(quoteId, 'quote'))
   let businessInfo: QuoteBusinessInfo = {}
   try {
@@ -997,17 +1013,82 @@ async function exportQuotePdf(db: DatabaseType, quoteId: ID): Promise<string> {
   try {
     await win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html))
     const pdf = await win.webContents.printToPDF({ printBackground: true })
-    const picked = await dialog.showSaveDialog({
-      title: 'Export quote as PDF',
-      defaultPath: `${full.quote.reference}.pdf`,
-      filters: [{ name: 'PDF', extensions: ['pdf'] }],
-    })
-    if (picked.canceled || !picked.filePath) throw new Error('PDF export was cancelled.')
-    writeFileSync(picked.filePath, pdf)
-    return picked.filePath
+    return { pdf, reference: full.quote.reference }
   } finally {
     win.close()
   }
+}
+
+/** Dialog path: native save dialog, unchanged behavior. */
+async function exportQuotePdf(db: DatabaseType, quoteId: ID): Promise<string> {
+  const { pdf, reference } = await renderQuotePdfBuffer(db, quoteId)
+  const picked = await dialog.showSaveDialog({
+    title: 'Export quote as PDF',
+    defaultPath: `${reference}.pdf`,
+    filters: [{ name: 'PDF', extensions: ['pdf'] }],
+  })
+  if (picked.canceled || !picked.filePath) throw new Error('PDF export was cancelled.')
+  writeFileSync(picked.filePath, pdf)
+  return picked.filePath
+}
+
+/** Default PDF export folder: <userData>/exports. */
+const defaultPdfExportDir = (): string => join(app.getPath('userData'), 'exports')
+
+/**
+ * Make sure a directory exists and is writable. Throws an Error that names
+ * the offending path so the UI can surface a clear message.
+ */
+function ensureWritableDir(dir: string): void {
+  try {
+    mkdirSync(dir, { recursive: true })
+  } catch (err) {
+    throw new Error(
+      `Could not create the PDF export folder: ${dir} — ${err instanceof Error ? err.message : String(err)}`,
+    )
+  }
+  try {
+    accessSync(dir, constants.W_OK)
+  } catch {
+    throw new Error(`The PDF export folder is not writable: ${dir}`)
+  }
+}
+
+/**
+ * Direct-save path (Gap 3): writes the rendered PDF straight to
+ * <outputDir>/<sanitized-ref>_<YYYYMMDD-HHmmss>.pdf with no dialog.
+ * The outputDir comes from the `pdf.outputDir` setting; empty means the
+ * default <userData>/exports folder.
+ */
+async function exportQuotePdfDirect(db: DatabaseType, quoteId: ID): Promise<{ path: string }> {
+  const { pdf, reference } = await renderQuotePdfBuffer(db, quoteId)
+  const configured = settingsDao.get(db, 'pdf.outputDir')
+  const dir = configured && configured.trim() ? configured.trim() : defaultPdfExportDir()
+  ensureWritableDir(dir)
+  const filePath = join(dir, quotePdfDirectFileName(reference))
+  writeFileSync(filePath, pdf)
+  return { path: filePath }
+}
+
+/** Native directory picker for the "PDF export folder" setting. Validates writability. */
+async function pickPdfExportDir(): Promise<string | null> {
+  const picked = await dialog.showOpenDialog({
+    title: 'Choose PDF export folder',
+    properties: ['openDirectory', 'createDirectory'],
+  })
+  if (picked.canceled || picked.filePaths.length === 0) return null
+  const dir = picked.filePaths[0]
+  ensureWritableDir(dir)
+  return dir
+}
+
+/** Reveal the folder containing an exported PDF in the OS file manager. */
+async function openPdfExportFolder(filePath: string): Promise<void> {
+  if (typeof filePath !== 'string' || !filePath) {
+    throw new Error('A file path is required to open its folder.')
+  }
+  const error = await shell.openPath(dirname(filePath))
+  if (error) throw new Error(`Could not open the folder: ${error}`)
 }
 
 /* ------------------------------------------------------------------ */

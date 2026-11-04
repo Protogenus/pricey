@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import Decimal from 'decimal.js'
 import { api } from '../api.js'
 import { EmptyState } from '../components/EmptyState.js'
@@ -142,6 +142,7 @@ export default function Settings() {
           </div>
 
           <CustomUnitsSection />
+          <PdfExportSection />
           <DataSection />
           <IntegrationsSection contracts={contractsQ.data ?? []} loading={contractsQ.loading} error={contractsQ.error} />
 
@@ -870,5 +871,118 @@ function ImportReportDialog({
         </>
       ) : null}
     </Modal>
+  )
+}
+
+/* PDF export                                                          */
+
+function PdfExportSection() {
+  const [autoSave, setAutoSave] = useState(false)
+  const [outputDir, setOutputDir] = useState('')
+  const [loaded, setLoaded] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [savedMsg, setSavedMsg] = useState<string | null>(null)
+  const dataPathQ = useAsync(() => api.settingsGetDataPath(), [])
+
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      try {
+        const [as, dir] = await Promise.all([
+          api.settingsGet('pdf.autoSave').catch(() => null),
+          api.settingsGet('pdf.outputDir').catch(() => null),
+        ])
+        if (!cancelled) {
+          setAutoSave(as === '1')
+          setOutputDir(dir ?? '')
+          setLoaded(true)
+        }
+      } catch (e) {
+        if (!cancelled) setError(errMsg(e))
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  async function choose() {
+    setError(null)
+    setSavedMsg(null)
+    setBusy(true)
+    try {
+      // Native directory picker; the backend validates the folder is writable.
+      const picked = await api.quotesExportPdfPickDir()
+      if (picked) setOutputDir(picked)
+    } catch (e) {
+      setError(errMsg(e))
+    }
+    setBusy(false)
+  }
+
+  async function save() {
+    setError(null)
+    setSavedMsg(null)
+    setBusy(true)
+    try {
+      await api.settingsSet('pdf.autoSave', autoSave ? '1' : '0')
+      await api.settingsSet('pdf.outputDir', outputDir)
+      setSavedMsg('PDF export settings saved.')
+    } catch (e) {
+      setError(errMsg(e))
+    }
+    setBusy(false)
+  }
+
+  return (
+    <div className="card mb-16">
+      <div className="section-title">PDF export</div>
+      <p className="muted">
+        Quote PDFs can be saved straight to a folder with no dialog, or with the usual save
+        dialog every time.
+      </p>
+      {error ? <ErrorBanner message={error} /> : null}
+      {savedMsg ? (
+        <div className="notice notice-success mb-16">
+          <strong>{savedMsg}</strong>
+        </div>
+      ) : null}
+      {!loaded ? (
+        <Loading />
+      ) : (
+        <>
+          <label
+            style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 12, cursor: 'pointer' }}
+          >
+            <input
+              type="checkbox"
+              checked={autoSave}
+              onChange={(e) => setAutoSave(e.target.checked)}
+            />
+            Save PDFs without asking
+          </label>
+          <Field
+            label="PDF export folder"
+            hint="Used when “Save PDFs without asking” is on. Defaults to exports/ inside the app data folder."
+          >
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <span className="muted" style={{ wordBreak: 'break-all', flex: 1 }}>
+                {outputDir ||
+                  (dataPathQ.data ? `${dataPathQ.data}/exports` : 'exports/ inside the app data folder')}
+              </span>
+              <button type="button" className="secondary" onClick={() => void choose()} disabled={busy}>
+                Choose…
+              </button>
+            </div>
+          </Field>
+          <div style={{ marginTop: 12 }}>
+            <button type="button" onClick={() => void save()} disabled={busy || !loaded}>
+              {busy ? 'Saving…' : 'Save PDF export settings'}
+            </button>
+          </div>
+        </>
+      )}
+    </div>
   )
 }

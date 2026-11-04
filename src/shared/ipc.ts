@@ -172,6 +172,9 @@ export const IPC = {
   quotesGetFull: 'quotes.getFull',
   quotesDuplicate: 'quotes.duplicate',
   quotesExportPdf: 'quotes.exportPdf',
+  quotesExportPdfDirect: 'quotes.exportPdfDirect',
+  quotesExportPdfPickDir: 'quotes.exportPdfPickDir',
+  quotesExportPdfOpenFolder: 'quotes.exportPdfOpenFolder',
   quoteItemsAdd: 'quotes.items.add',
   quoteItemsUpdate: 'quotes.items.update',
   quoteItemsRemove: 'quotes.items.remove',
@@ -532,6 +535,12 @@ export interface PriceyApi {
   quotesGetFull(id: ID): Promise<QuoteFull>
   quotesDuplicate(id: ID): Promise<Quote>
   quotesExportPdf(id: ID): Promise<string>
+  /** Direct-save export: writes to the configured PDF folder with no dialog. */
+  quotesExportPdfDirect(id: ID): Promise<{ path: string }>
+  /** Native directory picker for the PDF export folder; null when cancelled. */
+  quotesExportPdfPickDir(): Promise<string | null>
+  /** Reveal the folder containing an exported PDF in the OS file manager. */
+  quotesExportPdfOpenFolder(filePath: string): Promise<void>
   quoteItemsAdd(quoteId: ID, input: NewQuoteItemInput): Promise<QuoteItem>
   quoteItemsUpdate(input: UpdateQuoteItemInput): Promise<QuoteItem>
   quoteItemsRemove(id: ID): Promise<void>

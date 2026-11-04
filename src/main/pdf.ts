@@ -129,3 +129,52 @@ export function buildQuoteHtml(
   </div>
 </body></html>`
 }
+
+/* ------------------------------------------------------------------ */
+/* Direct-save filename helpers                                        */
+/* ------------------------------------------------------------------ */
+
+/** Windows reserved device names — illegal as a bare filename. */
+const RESERVED_NAMES = new Set([
+  'CON',
+  'PRN',
+  'AUX',
+  'NUL',
+  ...Array.from({ length: 9 }, (_, i) => `COM${i + 1}`),
+  ...Array.from({ length: 9 }, (_, i) => `LPT${i + 1}`),
+])
+
+const MAX_FILENAME_STEM = 80
+
+/**
+ * Sanitize a quote reference into a safe filename stem: strip path
+ * separators and every character illegal in Windows/Unix filenames, trim
+ * trailing dots/spaces (illegal on Windows), cap length. Falls back to
+ * 'quote' when nothing usable remains.
+ */
+export function sanitizeQuoteFileName(reference: string): string {
+  let stem = String(reference ?? '')
+    // Strip illegal filename characters (incl. path separators) and control chars.
+    .replace(/[<>:"/\\|?*\x00-\x1F]/g, '')
+    .trim()
+  // Trailing dots/spaces are illegal on Windows.
+  stem = stem.replace(/[.\s]+$/, '')
+  if (stem.length > MAX_FILENAME_STEM) stem = stem.slice(0, MAX_FILENAME_STEM)
+  if (!stem || RESERVED_NAMES.has(stem.toUpperCase())) stem = 'quote'
+  return stem
+}
+
+const pad2 = (n: number): string => String(n).padStart(2, '0')
+
+/** Local-time timestamp for direct-save filenames: YYYYMMDD-HHmmss. */
+export function quotePdfTimestamp(date: Date = new Date()): string {
+  return (
+    `${date.getFullYear()}${pad2(date.getMonth() + 1)}${pad2(date.getDate())}` +
+    `-${pad2(date.getHours())}${pad2(date.getMinutes())}${pad2(date.getSeconds())}`
+  )
+}
+
+/** Full direct-save filename: <sanitized-ref>_<YYYYMMDD-HHmmss>.pdf */
+export function quotePdfDirectFileName(reference: string, date: Date = new Date()): string {
+  return `${sanitizeQuoteFileName(reference)}_${quotePdfTimestamp(date)}.pdf`
+}
