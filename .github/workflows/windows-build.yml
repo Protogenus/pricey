@@ -1,0 +1,78 @@
+name: Windows build
+
+# Builds the Windows deliverables on a real Windows runner:
+#  - portable zip (pricey-<version>.zip, extract + START_PRICEY.bat)
+#  - NSIS installer (release/Pricey Setup <version>.exe)
+# Public repo = unlimited free Actions minutes, so every push to main is built.
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          # better-sqlite3 v13 requires Node >= 22 (engines field); its
+          # win32-x64 prebuild segfaults (0xC0000005) under Node 20.
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        # Pricey has no test suite by design (build order); typecheck is the
+        # correctness gate, replacing the unit-test step other repos run.
+        run: npm run typecheck
+
+      - name: Rebuild native modules for Electron
+        run: npm run rebuild
+
+      - name: Package for Windows (portable zip + NSIS installer)
+        # Repo config is zip-only (nsis needs Wine on Linux). On a real Windows
+        # runner both targets build fine, so enable nsis for this run only.
+        # The package.json patch is NOT committed.
+        # --publish never: electron-builder auto-publishes when it detects CI;
+        # artifacts are uploaded via upload-artifact instead (no release spam).
+        run: |
+          node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('package.json','utf8'));p.build.win.target=['zip','nsis'];fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\n')"
+          npm run build
+          npx electron-builder --win --x64 --publish never
+
+      - name: Assemble portable deliverable
+        # The electron-builder win zip holds the unpacked app files at TOP LEVEL
+        # (no win-unpacked wrapper) - verified via unzip -l on the sibling
+        # Orderly build. Extracting into release-staging/ (which already holds
+        # START_PRICEY.bat + README.txt, committed in the repo) yields exactly
+        # the flat layout the launcher expects: Pricey.exe next to the bat.
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = (node -p "require('./package.json').version")
+          $ebZip = "release/Pricey-$version-win.zip"
+          if (-not (Test-Path $ebZip)) { throw "electron-builder zip not found: $ebZip" }
+          Expand-Archive -Path $ebZip -DestinationPath 'release-staging' -Force
+          if (-not (Test-Path 'release-staging/Pricey.exe')) { throw 'Pricey.exe missing after extract' }
+          if (-not (Test-Path 'release-staging/START_PRICEY.bat')) { throw 'launcher bat missing' }
+          if (-not (Test-Path 'release-staging/resources/app.asar')) { throw 'app.asar missing' }
+          $out = "pricey-$version.zip"
+          if (Test-Path $out) { Remove-Item $out }
+          Compress-Archive -Path 'release-staging/*' -DestinationPath $out
+          Get-Item $out | Select-Object Name, @{n='MB'; e={[math]::Round($_.Length/1MB,1)}}
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: pricey-windows
+          path: |
+            pricey-*.zip
+            release/*.exe
+          if-no-files-found: error

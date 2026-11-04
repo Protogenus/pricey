@@ -47,12 +47,12 @@
 
 ## Honestly unfinished / known gaps
 
-1. **File-based `.pricey-exchange.json` import/export is not built.** The 6 contracts are documented interfaces with manual exchange working today; `docs/INTEGRATIONS.md` now states this explicitly (it previously described the file flow as existing — corrected).
-2. **Product image:** the DB stores `image_path`, but the UI has no image upload control (spec: optional).
-3. **Fixed-profit vs target-profit tabs** are the same underlying math (`price = cost + profit`) with different framing — presented as separate tabs per the spec's two sections.
-4. **Quote PDF end-to-end** needs the native save dialog, which cannot be driven headless — verified everything up to the dialog.
-5. **No Windows installer zip** — standing rule; Blake asks when ready.
-6. **No multi-currency** — USD-centric display; not in the spec.
+1. **File-based `.pricey-exchange.json` import/export — FILLED (gap-fill mission, commit 6fc17cd).** `pricey-exchange-v1` schema with versioned envelope; export for the outbound `orderly.pricing-export` contract; import for all 5 inbound contracts with read-only preview/diff and explicit confirm; hard errors on unknown schema/contract versions; per-row rejections naming the field; migration `002_exchange_log` audit table; Settings → Integrations Import/Export wired to native file dialogs. Verified: ~60 checks incl. export→fresh-DB round-trip with exact string equality, no duplicates on re-import, quotes never overwritten. `docs/INTEGRATIONS.md` rewritten in present tense.
+2. **Product image — FILLED (gap-fill mission, commit eb2c0a6).** Product editor has an image picker (native dialog); images validated by magic bytes (png/jpg/webp), 5 MB cap, stored content-addressed by SHA-256 under `<userData>/images/` with reference-counted deletion; thumbnails on list and detail; migration `003_product_images`. Verified: 33 DAO checks + 26 E2E checks through the built app.
+3. **Fixed-profit vs target-profit tabs** are the same underlying math (`price = cost + profit`) with different framing — presented as separate tabs per the spec's two sections. (Standing, not a defect.)
+4. **Quote PDF end-to-end — FILLED (gap-fill mission, commit b415f73).** Settings → "Save PDFs without asking" + configurable export folder (default `<userData>/exports/`); direct save writes `<sanitized-ref>_<YYYYMMDD-HHmmss>.pdf` with an "Open folder" action; the native-dialog path remains when the setting is off. Both paths share one HTML→PDF pipeline — page content verified identical across direct and dialog paths (raw bytes differ only in Chromium's baked-in CreationDate/ModDate/ID metadata, impossible to equalize by construction).
+5. **No Windows installer zip** — being built in Gap 4 of this mission (repo Protogenus/pricey + Windows CI + v0.1.0 release).
+6. **No multi-currency** — USD-centric display; not in the spec. (Standing.)
 
 ## Completion requirements 1–15
 
