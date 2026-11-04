@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import Decimal from 'decimal.js'
 import { api } from '../api.js'
 import { Money } from '../components/Money.js'
@@ -95,6 +95,45 @@ async function loadCustomUnits(): Promise<CustomUnitDef[]> {
   }
 }
 
+/* ------------------------------------------------------------------ */
+/* Product thumbnail                                                   */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Thumbnail for a stored image reference. The bytes come from main as a data
+ * URL — the sandboxed renderer cannot read the image file itself. Products
+ * without an image show the same "—" as every other empty field; there are
+ * no placeholder images.
+ */
+function ProductThumb({ imageRef, size = 40 }: { imageRef: string; size?: number }) {
+  const q = useAsync(
+    () => (imageRef ? api.productsImageData(imageRef) : Promise.resolve(null)),
+    [imageRef],
+  )
+  // A stored file can still be undecodable (truncated upload, disk corruption):
+  // degrade to the empty marker instead of a broken-image glyph.
+  const [broken, setBroken] = useState(false)
+  useEffect(() => setBroken(false), [imageRef])
+  if (!imageRef) return <span className="muted">—</span>
+  if (q.loading)
+    return <span className="thumb" style={{ width: size, height: size }} aria-hidden="true" />
+  if (!q.data || broken)
+    return (
+      <span className="muted" title="The image file is missing or unreadable.">
+        —
+      </span>
+    )
+  return (
+    <img
+      className="thumb"
+      style={{ width: size, height: size }}
+      src={q.data}
+      alt=""
+      onError={() => setBroken(true)}
+    />
+  )
+}
+
 export default function Products({ componentOnly = false }: { componentOnly?: boolean }) {
   const title = componentOnly ? 'Components' : 'Products'
   const [creating, setCreating] = useState(false)
@@ -148,6 +187,7 @@ export default function Products({ componentOnly = false }: { componentOnly?: bo
               <table>
                 <thead>
                   <tr>
+                    <th>Image</th>
                     <th>Name</th>
                     <th>SKU</th>
                     <th>Category</th>
@@ -161,6 +201,9 @@ export default function Products({ componentOnly = false }: { componentOnly?: bo
                 <tbody>
                   {products.map((p) => (
                     <tr key={p.id}>
+                      <td>
+                        <ProductThumb imageRef={p.image_path} />
+                      </td>
                       <td>
                         <button type="button" className="link-btn" onClick={() => setSelectedId(p.id)}>
                           <strong>{p.name}</strong>
@@ -222,6 +265,8 @@ export default function Products({ componentOnly = false }: { componentOnly?: bo
       {editing ? (
         <ProductModal
           title={`Edit — ${editing.name}`}
+          productId={editing.id}
+          imageRef={editing.image_path || undefined}
           initial={{
             name: editing.name,
             sku: editing.sku,
@@ -240,7 +285,6 @@ export default function Products({ componentOnly = false }: { componentOnly?: bo
             setEditing(null)
             q.reload()
           }}
-          productId={editing.id}
         />
       ) : null}
 
@@ -280,6 +324,7 @@ function ProductModal({
   title,
   initial,
   productId,
+  imageRef,
   componentOnly,
   onClose,
   onSaved,
@@ -287,6 +332,8 @@ function ProductModal({
   title: string
   initial: ProductFormState
   productId?: ID
+  /** Existing stored image reference (edit mode); undefined for new products. */
+  imageRef?: string
   componentOnly: boolean
   onClose: () => void
   onSaved: (p: Product) => void
@@ -294,8 +341,54 @@ function ProductModal({
   const [form, setForm] = useState(initial)
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+  const [preview, setPreview] = useState<string | null>(null)
+  const [pending, setPending] = useState<{ dataUrl: string; filename: string } | null>(null)
+  const [removeExisting, setRemoveExisting] = useState(false)
+  const [imgBusy, setImgBusy] = useState(false)
+  const [imgError, setImgError] = useState<string | null>(null)
   const set = (k: keyof ProductFormState, v: string | boolean) =>
     setForm((f) => ({ ...f, [k]: v }))
+
+  // Load the existing image for preview once (edit mode).
+  useEffect(() => {
+    let cancelled = false
+    if (imageRef) {
+      api
+        .productsImageData(imageRef)
+        .then((d) => {
+          if (!cancelled && d) setPreview(d)
+        })
+        .catch(() => {
+          /* missing/unreadable file: preview simply stays empty */
+        })
+    }
+    return () => {
+      cancelled = true
+    }
+  }, [imageRef])
+
+  async function chooseImage() {
+    setImgError(null)
+    setImgBusy(true)
+    try {
+      const picked = await api.productsImagePick()
+      if (picked) {
+        setPending(picked)
+        setPreview(picked.dataUrl)
+        setRemoveExisting(false)
+      }
+    } catch (e) {
+      setImgError(errMsg(e))
+    } finally {
+      setImgBusy(false)
+    }
+  }
+
+  function clearImage() {
+    setPending(null)
+    setPreview(null)
+    setRemoveExisting(!!imageRef)
+  }
 
   function validate(): string | null {
     if (!form.name.trim()) return 'A product name is required.'
@@ -340,6 +433,12 @@ function ProductModal({
         productId === undefined
           ? await api.productsCreate(payload)
           : await api.productsUpdate({ id: productId, ...payload })
+      // Image changes land after the product exists, so a new product can get one too.
+      if (pending) {
+        await api.productsImageSave(saved.id, pending.dataUrl, pending.filename)
+      } else if (removeExisting && productId !== undefined) {
+        await api.productsImageRemove(productId)
+      }
       onSaved(saved)
     } catch (e) {
       setError(errMsg(e))
@@ -403,6 +502,34 @@ function ProductModal({
           </Field>
         ) : null}
       </div>
+      <Field
+        label="Product image"
+        hint="PNG, JPG, or WebP, up to 5 MB. Stored with the product; saved when you save the product."
+      >
+        <div className="image-picker">
+          {preview ? (
+            <img className="thumb thumb-lg" src={preview} alt="Product image preview" />
+          ) : (
+            <span className="muted">No image</span>
+          )}
+          <div className="row-actions">
+            <button
+              type="button"
+              className="secondary"
+              onClick={chooseImage}
+              disabled={imgBusy || saving}
+            >
+              {imgBusy ? 'Choosing…' : 'Choose image…'}
+            </button>
+            {preview ? (
+              <button type="button" className="link-btn danger" onClick={clearImage}>
+                Remove
+              </button>
+            ) : null}
+          </div>
+        </div>
+        {imgError ? <ErrorBanner message={imgError} /> : null}
+      </Field>
       <Field label="Description">
         <TextInput value={form.description} onChange={(e) => set('description', e.target.value)} />
       </Field>
@@ -531,6 +658,11 @@ function ProductDetail({
               <h2 style={{ margin: 0 }}>{d.full.name}</h2>
               {d.full.is_component === 1 ? <span className="pill pill-sky">component</span> : null}
             </div>
+            {d.full.image_path ? (
+              <div className="mb-16">
+                <ProductThumb imageRef={d.full.image_path} size={120} />
+              </div>
+            ) : null}
             <dl className="kv">
               <dt>SKU</dt>
               <dd>{d.full.sku || '—'}</dd>

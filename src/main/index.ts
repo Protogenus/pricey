@@ -184,6 +184,7 @@ const PRICEY_API_METHODS: string[] = [
   'productsAddComponent', 'productsUpdateComponentLine', 'productsRemoveComponentLine',
   'productsAddOtherCost', 'productsUpdateOtherCostLine', 'productsRemoveOtherCostLine',
   'productsComputeCost', 'productsSaveSnapshot',
+  'productsImagePick', 'productsImageSave', 'productsImageRemove', 'productsImageData',
   'templatesList', 'templatesCreate', 'templatesUpdate', 'templatesDelete', 'templatesApply',
   'pricingConfigsList', 'pricingConfigsCreate', 'pricingConfigsUpdate', 'pricingConfigsDelete',
   'pricingCalculate', 'pricingExplain',

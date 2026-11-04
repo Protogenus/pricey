@@ -109,6 +109,10 @@ export const IPC = {
   productsRemoveOtherCostLine: 'products.removeOtherCostLine',
   productsComputeCost: 'products.computeCost',
   productsSaveSnapshot: 'products.saveSnapshot',
+  productsImagePick: 'products.image.pick',
+  productsImageSave: 'products.image.save',
+  productsImageRemove: 'products.image.remove',
+  productsImageData: 'products.image.data',
 
   templatesList: 'templates.list',
   templatesCreate: 'templates.create',
@@ -461,6 +465,14 @@ export interface PriceyApi {
   productsRemoveOtherCostLine(lineId: ID): Promise<void>
   productsComputeCost(productId: ID): Promise<EngineResult>
   productsSaveSnapshot(productId: ID, label?: string): Promise<CostSnapshot>
+  /** Native open dialog → validated image bytes as a data URL for preview. Nothing is stored yet. */
+  productsImagePick(): Promise<{ dataUrl: string; filename: string } | null>
+  /** Validate + store image bytes and link them to the product. Replaces any previous image. */
+  productsImageSave(productId: ID, dataUrl: string, filename: string): Promise<Product>
+  /** Unlink the product's image; the file is deleted when nothing else references it. */
+  productsImageRemove(productId: ID): Promise<Product>
+  /** Data URL for a stored image reference; null when the file is missing or unreadable. */
+  productsImageData(imageRef: string): Promise<string | null>
 
   templatesList(): Promise<TemplateRec[]>
   templatesCreate(input: NewTemplateInput): Promise<TemplateRec>

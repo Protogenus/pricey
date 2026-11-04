@@ -510,3 +510,23 @@ input[type="checkbox"].check {
 
 .mt-16 { margin-top: 16px; }
 .mb-16 { margin-bottom: 16px; }
+
+/* Product image thumbnails (Gap 2): square crops; empty state stays empty. */
+.thumb {
+  display: inline-block;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  vertical-align: middle;
+}
+.thumb-lg {
+  width: 120px;
+  height: 120px;
+}
+.image-picker {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}

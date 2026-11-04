@@ -76,6 +76,11 @@ const api: PriceyApi = {
   productsRemoveOtherCostLine: (lineId) => invoke(IPC.productsRemoveOtherCostLine, lineId),
   productsComputeCost: (productId) => invoke(IPC.productsComputeCost, productId),
   productsSaveSnapshot: (productId, label) => invoke(IPC.productsSaveSnapshot, productId, label),
+  productsImagePick: () => invoke(IPC.productsImagePick),
+  productsImageSave: (productId, dataUrl, filename) =>
+    invoke(IPC.productsImageSave, productId, dataUrl, filename),
+  productsImageRemove: (productId) => invoke(IPC.productsImageRemove, productId),
+  productsImageData: (imageRef) => invoke(IPC.productsImageData, imageRef),
 
   templatesList: () => invoke(IPC.templatesList),
   templatesCreate: (input) => invoke(IPC.templatesCreate, input),

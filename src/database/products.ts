@@ -40,6 +40,7 @@ import { costPerUnitOf, get as getMaterial } from './materials.js'
 import { get as getLaborRole } from './labor.js'
 import { get as getOverheadItem } from './overhead.js'
 import { get as getSetting } from './settings.js'
+import { isValidImageRef } from './images.js'
 import { nowIso, parseJson, requireDecimalText, requireFractionText, requireId, requireNonEmpty } from './util.js'
 
 interface ProductRow {
@@ -172,6 +173,26 @@ export function unarchive(db: DatabaseType, id: ID): void {
   const rowId = requireId(id, 'product')
   get(db, rowId)
   db.prepare('UPDATE products SET archived = 0, updated_at = ? WHERE id = ?').run(nowIso(), rowId)
+}
+
+/**
+ * Link (or unlink, with '') a product's image. The reference is validated
+ * against the content-addressed format (`images/<sha256>.<ext>`); the file
+ * itself is managed by src/database/images.ts. Deleting the orphaned file
+ * after replace/remove is the caller's job (see releaseUnreferenced).
+ */
+export function setImage(db: DatabaseType, id: ID, imageRef: string): Product {
+  const rowId = requireId(id, 'product')
+  get(db, rowId)
+  if (imageRef !== '' && !isValidImageRef(imageRef)) {
+    throw new Error(`Invalid image reference "${imageRef}".`)
+  }
+  db.prepare('UPDATE products SET image_path = ?, updated_at = ? WHERE id = ?').run(
+    imageRef,
+    nowIso(),
+    rowId,
+  )
+  return get(db, rowId)
 }
 
 /** Delete; RESTRICT references surface a clear message naming the product(s). */

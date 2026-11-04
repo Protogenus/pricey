@@ -8,6 +8,7 @@
  */
 import { app, BrowserWindow, dialog, ipcMain } from 'electron'
 import { readFileSync, writeFileSync } from 'node:fs'
+import { basename } from 'node:path'
 import Decimal from 'decimal.js'
 import { IPC, type IpcResult } from '../shared/ipc.js'
 import type {
@@ -25,6 +26,7 @@ import * as materialsDao from '../database/materials.js'
 import * as laborDao from '../database/labor.js'
 import * as overheadDao from '../database/overhead.js'
 import * as productsDao from '../database/products.js'
+import * as imagesDao from '../database/images.js'
 import * as pricingDao from '../database/pricing.js'
 import * as scenariosDao from '../database/scenarios.js'
 import * as bundlesDao from '../database/bundles.js'
@@ -88,6 +90,8 @@ export function registerIpc(db: DatabaseType): void {
   let activeDb = db
   const getDb = (): DatabaseType => activeDb
   const dbPath = (): string => (activeDb as unknown as { name: string }).name
+  /** Product images live under this dir: <userData>/images/<sha256>.<ext>. */
+  const userDataDir = (): string => app.getPath('userData')
 
   /* ---------------- ping ---------------- */
   handle<string>(IPC.ping, () => 'pong')
@@ -177,7 +181,14 @@ export function registerIpc(db: DatabaseType): void {
   handle(IPC.productsCreate, (input) => productsDao.create(getDb(), input))
   handle(IPC.productsUpdate, (input) => productsDao.update(getDb(), input))
   handle<void>(IPC.productsArchive, (id: ID) => productsDao.archive(getDb(), id))
-  handle<void>(IPC.productsDelete, (id: ID) => productsDao.remove(getDb(), id))
+  handle<void>(IPC.productsDelete, (id: ID) => {
+    const db = getDb()
+    const product = productsDao.get(db, requireId(id, 'product'))
+    const imageRef = product.image_path
+    productsDao.remove(db, id)
+    // The product is gone: drop its image file when nothing else references it.
+    imagesDao.releaseUnreferenced(db, userDataDir(), imageRef)
+  })
   handle(IPC.productsGetFull, (id: ID) => productsDao.getFull(getDb(), id))
 
   handle(IPC.productsAddMaterial, (productId: ID, input) =>
@@ -246,6 +257,77 @@ export function registerIpc(db: DatabaseType): void {
       label: label?.trim() || `Snapshot — ${product.name} — ${nowIso()}`,
       snapshot_json: JSON.stringify(result),
     })
+  })
+
+  /* ---------------- product images ---------------- */
+  /**
+   * Flow: productsImagePick (native dialog → validated bytes as a data URL
+   * for editor preview, nothing stored) → productsImageSave (validate again,
+   * store content-addressed, link to product) or productsImageRemove.
+   * productsImageData serves a stored reference back as a data URL for
+   * <img> tags — the sandboxed renderer cannot read the file itself.
+   */
+  handle<{ dataUrl: string; filename: string } | null>(IPC.productsImagePick, async () => {
+    const picked = await dialog.showOpenDialog({
+      title: 'Choose product image',
+      properties: ['openFile'],
+      filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp'] }],
+    })
+    if (picked.canceled || picked.filePaths.length === 0) return null
+    const filePath = picked.filePaths[0]
+    let bytes: Buffer
+    try {
+      bytes = readFileSync(filePath)
+    } catch {
+      throw new Error(
+        'Could not read the selected file — it may have been moved, renamed, or deleted.',
+      )
+    }
+    const kind = imagesDao.validateImageBytes(bytes)
+    return {
+      dataUrl: `data:${imagesDao.mimeFor(kind)};base64,${bytes.toString('base64')}`,
+      filename: basename(filePath),
+    }
+  })
+
+  handle(IPC.productsImageSave, (productId: ID, dataUrl: string, filename: string) => {
+    const db = getDb()
+    const id = requireId(productId, 'product')
+    const bytes = decodeImageDataUrl(dataUrl, filename)
+    const prev = productsDao.get(db, id).image_path
+    // storeImage re-validates size + magic bytes: the renderer is untrusted.
+    const ref = imagesDao.storeImage(userDataDir(), bytes)
+    db.transaction(() => {
+      productsDao.setImage(db, id, ref)
+    })()
+    if (prev !== ref) imagesDao.releaseUnreferenced(db, userDataDir(), prev)
+    return productsDao.get(db, id)
+  })
+
+  handle(IPC.productsImageRemove, (productId: ID) => {
+    const db = getDb()
+    const id = requireId(productId, 'product')
+    const prev = productsDao.get(db, id).image_path
+    db.transaction(() => {
+      productsDao.setImage(db, id, '')
+    })()
+    imagesDao.releaseUnreferenced(db, userDataDir(), prev)
+    return productsDao.get(db, id)
+  })
+
+  handle<string | null>(IPC.productsImageData, (imageRef: string) => {
+    if (typeof imageRef !== 'string' || !imageRef) return null
+    const bytes = (() => {
+      try {
+        return imagesDao.readImageBytes(userDataDir(), imageRef)
+      } catch {
+        return null
+      }
+    })()
+    if (!bytes) return null
+    const kind = imagesDao.detectImageKind(bytes)
+    if (!kind) return null
+    return `data:${imagesDao.mimeFor(kind)};base64,${bytes.toString('base64')}`
   })
 
   /* ---------------- templates ---------------- */
@@ -446,6 +528,27 @@ export function registerIpc(db: DatabaseType): void {
 /* ------------------------------------------------------------------ */
 /* Cost                                                                */
 /* ------------------------------------------------------------------ */
+
+/**
+ * Decode an image data URL back to bytes. The payload is re-validated by
+ * imagesDao.validateImageBytes on store — this only guards the envelope.
+ */
+function decodeImageDataUrl(dataUrl: string, filename: string): Buffer {
+  if (typeof dataUrl !== 'string') {
+    throw new Error(`No image data was provided for "${filename || 'the image'}".`)
+  }
+  const comma = dataUrl.indexOf(',')
+  if (!dataUrl.startsWith('data:image/') || comma < 0) {
+    throw new Error(
+      `The image data for "${filename || 'the image'}" was corrupted. Choose the image again.`,
+    )
+  }
+  const bytes = Buffer.from(dataUrl.slice(comma + 1), 'base64')
+  if (bytes.length === 0) {
+    throw new Error(`The image data for "${filename || 'the image'}" was empty. Choose the image again.`)
+  }
+  return bytes
+}
 
 /** Build → validate (naming every bad field) → compute. Throws on any problem. */
 function computeCostOrThrow(db: DatabaseType, productId: ID): ProductCostResult {
