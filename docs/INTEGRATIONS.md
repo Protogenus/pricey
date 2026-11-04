@@ -22,9 +22,22 @@ shows an honest "Not connected" state with the manual path beside it.
 - **Snapshots are never overwritten** by an import. Quote and calculation
   snapshots are append-only history.
 
-## Exchange mechanism (v1)
+## Exchange mechanism — current state (manual)
 
-File-based JSON exchange through Pricey's Import/Export screens:
+The contracts below are **documented, versioned interfaces**; the file-based
+exchange described after them is the planned v1 import path and is **not yet
+built**. What exists today, and works fully:
+
+- **Manual exchange:** the user reads a sibling app's export (or its screen)
+  and enters the values into Pricey using the field mapping in each contract.
+  Every Pricey workflow — materials, products, cost roll-ups, quotes — works
+  completely this way. The Settings → Integrations panel lists each contract
+  with an honest "Not connected" state and the manual path beside it.
+
+## Planned v1 file exchange (not implemented)
+
+When built, exchange will be file-based JSON through Pricey's Import/Export
+screens:
 
 - **Inbound:** user opens Integrations → selects a contract → chooses a
   `.pricey-exchange.json` file exported from the sibling app → reviews a
@@ -32,9 +45,12 @@ File-based JSON exchange through Pricey's Import/Export screens:
   against the contract schema and reports every rejected field.
 - **Outbound:** user selects Pricey records → Export → produces a versioned
   JSON file the sibling app can import under its own contract.
-- Payloads carry `{ "contract": "<name>", "contractVersion": 1,
+- Payloads will carry `{ "contract": "<name>", "contractVersion": 1,
   "exportedAt": "<ISO>", "exportedBy": "<app>" }`. Unknown contract versions
   are rejected with a clear message, never guessed at.
+
+Until that exists, the field mappings in each contract below are the manual
+exchange guide.
 
 ## Contracts
 
@@ -127,7 +143,9 @@ workflows.
 Orderly imports prices as quoted figures; Pricey retains the full
 calculation snapshot behind `snapshotId` for audit.
 
-## Validation & errors
+## Validation & errors (planned v1 file exchange)
+
+When the file exchange above is built, these rules will govern it:
 
 - Every inbound payload is schema-checked before any write; the first
   failure aborts the import with the offending field named.
